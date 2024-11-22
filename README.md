@@ -1,1 +1,1 @@
-This repo is only for SECourses Patreon Users
+This repo is only for SECourses
