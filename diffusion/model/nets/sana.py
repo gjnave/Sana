@@ -247,7 +247,7 @@ class Sana(nn.Module):
         self.initialize_weights()
 
         if config:
-            logger = get_root_logger(os.path.join(config.work_dir, "train_log.log"))
+            logger = get_root_logger(os.path.join(config.get('work_dir', 'output'), "train_log.log"))
             logger = logger.warning
         else:
             logger = print

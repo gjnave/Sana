@@ -1,24 +1,10 @@
-#!/usr/bin/env python
-# Copyright 2024 NVIDIA CORPORATION & AFFILIATES
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import random
+import re
 import time
 import uuid
 from datetime import datetime
@@ -35,12 +21,12 @@ from app import safety_check
 from app.sana_pipeline import SanaPipeline
 
 MAX_SEED = np.iinfo(np.int32).max
-CACHE_EXAMPLES = torch.cuda.is_available() and os.getenv("CACHE_EXAMPLES", "1") == "1"
+
 MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", "4096"))
 USE_TORCH_COMPILE = os.getenv("USE_TORCH_COMPILE", "0") == "1"
 ENABLE_CPU_OFFLOAD = os.getenv("ENABLE_CPU_OFFLOAD", "0") == "1"
 DEMO_PORT = int(os.getenv("DEMO_PORT", "15432"))
-os.environ["GRADIO_EXAMPLES_CACHE"] = "./.gradio/cache"
+
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -179,7 +165,7 @@ def get_args():
         "--shield_model_path",
         type=str,
         help="The path to shield model, we employ ShieldGemma-2B by default.",
-        default="google/shieldgemma-2b",
+        default="MonsterMMORPG/fixed_sana2",
     )
 
     return parser.parse_known_args()[0]
@@ -200,17 +186,36 @@ if torch.cuda.is_available():
         args.shield_model_path,
         device_map="auto",
         torch_dtype=torch.bfloat16,
-    ).to(device)
+    )
+
+import torch
+from PIL import Image
 
 
-def save_image_sana(img, seed="", save_img=False):
-    unique_name = f"{str(uuid.uuid4())}_{seed}.png"
+def save_image_sana(img, seed="", save_img=False, ready_image=False):
     save_path = os.path.join(f"output/online_demo_img/{datetime.now().date()}")
     os.umask(0o000)  # file permission: 666; dir permission: 777
     os.makedirs(save_path, exist_ok=True)
+
+    # Scan existing files to find the highest number
+    existing_files = glob.glob(os.path.join(save_path, "img_*.png"))
+    if existing_files:
+        numbers = [int(re.search(r'img_(\d+)', f).group(1)) for f in existing_files if re.search(r'img_(\d+)', f)]
+        next_number = max(numbers, default=0) + 1
+    else:
+        next_number = 1
+
+    # Create new filename with padded zeros
+    unique_name = f"img_{str(next_number).zfill(4)}.png"
     unique_name = os.path.join(save_path, unique_name)
+
     if save_img:
-        save_image(img, unique_name, nrow=1, normalize=True, value_range=(-1, 1))
+        if ready_image:
+            # If the image is already a PIL Image, save it directly
+            img.save(unique_name)
+        else:
+            # If it's a tensor, use save_image function
+            save_image(img, unique_name, nrow=1, normalize=True, value_range=(-1, 1))
 
     return unique_name
 
@@ -220,6 +225,68 @@ def randomize_seed_fn(seed: int, randomize_seed: bool) -> int:
         seed = random.randint(0, MAX_SEED)
     return seed
 
+
+
+def splitimages(images, batch_size, seed):
+    if batch_size == 1:
+        return images
+    
+    split_images = []
+
+    # Save the stitched image
+    img_paths = [save_image_sana(img, f"{seed}_{i}", save_img=True) for i, img in enumerate(images)]
+    print(img_paths)
+
+    # Open the saved stitched image
+    stitched_image_path = img_paths[0]  # Assuming only one stitched image is saved
+    stitched_image = Image.open(stitched_image_path)
+
+    # Split the stitched image into individual images
+    width, height = stitched_image.size
+    individual_height = height // batch_size
+    print(f"width: {width}, height: {height}, individual_height: {individual_height}")
+        
+    for i in range(batch_size):
+        box = (0, i * individual_height, width, (i + 1) * individual_height)
+        split_img = stitched_image.crop(box)
+        
+        # Save each split image
+        split_img_path = save_image_sana(split_img, f"{seed}_{i}", save_img=True, ready_image=True)
+        split_images.append(split_img_path)
+
+    # Close the stitched image
+    stitched_image.close()
+
+    # Delete the stitched image
+    os.remove(stitched_image_path)
+
+    return split_images
+
+def tensor_to_pil(img_tensor):
+    # Ensure the tensor is on CPU
+    img_tensor = img_tensor.cpu()
+    
+    # If the tensor has 4 dimensions (B, C, H, W), squeeze the batch dimension
+    if img_tensor.dim() == 4:
+        img_tensor = img_tensor.squeeze(0)
+    
+    # Normalize and convert to PIL Image
+    img_tensor = (img_tensor * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+    img_tensor = img_tensor.permute(1, 2, 0)
+    return Image.fromarray(img_tensor.numpy())
+
+def tensor_to_pil(img_tensor):
+    # Ensure the tensor is on CPU
+    img_tensor = img_tensor.cpu()
+    
+    # If the tensor has 4 dimensions (B, C, H, W), squeeze the batch dimension
+    if img_tensor.dim() == 4:
+        img_tensor = img_tensor.squeeze(0)
+    
+    # Normalize and convert to PIL Image
+    img_tensor = (img_tensor * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+    img_tensor = img_tensor.permute(1, 2, 0)
+    return Image.fromarray(img_tensor.numpy())
 
 @torch.no_grad()
 @torch.inference_mode()
@@ -271,22 +338,16 @@ def generate(
         num_images_per_prompt=num_imgs,
         generator=generator,
     )
-
+    #images = splitimages(images, num_imgs,seed)
     pipe.progress_fn(1.0, desc="Sana End")
     INFER_SPEED = (time.time() - time_start) / num_imgs
 
-    save_img = False
+    save_img = True
     if save_img:
-        img = [save_image_sana(img, seed, save_img=save_image) for img in images]
+        img = [save_image_sana(img, f"{seed}_{i}", save_img=save_img) for i, img in enumerate(images)]
         print(img)
     else:
-        if num_imgs > 1:
-            nrow = 2
-        else:
-            nrow = 1
-        img = make_grid(images, nrow=nrow, normalize=True, value_range=(-1, 1))
-        img = img.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        img = [Image.fromarray(img.astype(np.uint8))]
+        img = images  # images are already PIL Images after splitting
 
     torch.cuda.empty_cache()
 
@@ -300,21 +361,8 @@ def generate(
 TEST_TIMES = read_inference_count()
 model_size = "1.6" if "D20" in args.model_path else "0.6"
 title = f"""
-    <div style='display: flex; align-items: center; justify-content: center; text-align: center;'>
-        <img src="https://raw.githubusercontent.com/NVlabs/Sana/refs/heads/main/asset/logo.png" width="50%" alt="logo"/>
-    </div>
+SANA APP V1 : Exclusive to SECourses : https://www.patreon.com/posts/116474081
 """
-DESCRIPTION = f"""
-        <p><span style="font-size: 36px; font-weight: bold;">Sana-{model_size}B</span><span style="font-size: 20px; font-weight: bold;">{args.image_size}px</span></p>
-        <p style="font-size: 16px; font-weight: bold;">Sana: Efficient High-Resolution Image Synthesis with Linear Diffusion Transformer</p>
-        <p><span style="font-size: 16px;"><a href="https://arxiv.org/abs/2410.10629">[Paper]</a></span> <span style="font-size: 16px;"><a href="https://github.com/NVlabs/Sana">[Github(coming soon)]</a></span> <span style="font-size: 16px;"><a href="https://nvlabs.github.io/Sana">[Project]</a></span</p>
-        <p style="font-size: 16px; font-weight: bold;">Powered by <a href="https://hanlab.mit.edu/projects/dc-ae">DC-AE</a> with 32x latent space</p>, running on A6000 node.
-        <p style="font-size: 16px; font-weight: bold;">Unsafe word will give you a 'Red Heart' in the image instead.</p>
-        """
-if model_size == "0.6":
-    DESCRIPTION += "\n<p>0.6B model's text rendering ability is limited.</p>"
-if not torch.cuda.is_available():
-    DESCRIPTION += "\n<p>Running on CPU 🥶 This demo does not work on CPU.</p>"
 
 examples = [
     'a cyberpunk cat with a neon sign that says "Sana"',
@@ -336,7 +384,6 @@ h1{text-align:center}
 """
 with gr.Blocks(css=css) as demo:
     gr.Markdown(title)
-    gr.Markdown(DESCRIPTION)
     gr.DuplicateButton(
         value="Duplicate Space for private use",
         elem_id="duplicate-button",
@@ -435,7 +482,7 @@ with gr.Blocks(css=css) as demo:
                     visible=True,
                 )
                 num_imgs = gr.Slider(
-                    label="Num Images",
+                    label="Batch Size",
                     minimum=1,
                     maximum=6,
                     step=1,
@@ -449,7 +496,6 @@ with gr.Blocks(css=css) as demo:
         inputs=prompt,
         outputs=[result, seed],
         fn=generate,
-        cache_examples=CACHE_EXAMPLES,
     )
 
     use_negative_prompt.change(
@@ -485,4 +531,4 @@ with gr.Blocks(css=css) as demo:
     )
 
 if __name__ == "__main__":
-    demo.queue(max_size=20).launch(server_name="0.0.0.0", server_port=DEMO_PORT, debug=True, share=True)
+    demo.queue(max_size=20).launch(inbrowser=True,debug=True, share=False)

@@ -14,6 +14,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 import torch
 from diffusers.models import AutoencoderKL
 from mmcv import Registry
@@ -28,10 +29,26 @@ MODELS = Registry("models")
 
 transformers_logging.set_verbosity_error()
 
-
 def build_model(cfg, use_grad_checkpoint=False, use_fp32_attention=False, gc_step=1, **kwargs):
     if isinstance(cfg, str):
         cfg = dict(type=cfg)
+    
+    # Create a default work_dir
+    default_work_dir = os.path.join(os.getcwd(), 'output')
+    os.makedirs(default_work_dir, exist_ok=True)
+    
+    # Add work_dir to the config if it's not already there
+    if 'work_dir' not in cfg:
+        cfg['work_dir'] = default_work_dir
+    
+    # Ensure the config is a dictionary and contains the work_dir
+    if not isinstance(cfg, dict):
+        cfg = dict(cfg)
+    cfg['work_dir'] = cfg.get('work_dir', default_work_dir)
+    
+    #print("Model config in build_model:", cfg)  # Debug print
+    #print("Additional kwargs:", kwargs)  # Debug print
+    
     model = MODELS.build(cfg, default_args=kwargs)
 
     if use_grad_checkpoint:
@@ -39,7 +56,6 @@ def build_model(cfg, use_grad_checkpoint=False, use_fp32_attention=False, gc_ste
     if use_fp32_attention:
         set_fp32_attention(model)
     return model
-
 
 def get_tokenizer_and_text_encoder(name="T5", device="cuda"):
     text_encoder_dict = {
@@ -52,7 +68,7 @@ def get_tokenizer_and_text_encoder(name="T5", device="cuda"):
         "gemma-2b": "google/gemma-2b",
         "gemma-2b-it": "google/gemma-2b-it",
         "gemma-2-2b": "google/gemma-2-2b",
-        "gemma-2-2b-it": "google/gemma-2-2b-it",
+        "gemma-2-2b-it": "MonsterMMORPG/fixed_sana",
         "gemma-2-9b": "google/gemma-2-9b",
         "gemma-2-9b-it": "google/gemma-2-9b-it",
         "Qwen2-0.5B-Instruct": "Qwen/Qwen2-0.5B-Instruct",
@@ -76,7 +92,6 @@ def get_tokenizer_and_text_encoder(name="T5", device="cuda"):
 
     return tokenizer, text_encoder
 
-
 def get_vae(name, model_path, device="cuda"):
     if name == "sdxl" or name == "sd3":
         vae = AutoencoderKL.from_pretrained(model_path).to(device).to(torch.float16)
@@ -90,7 +105,6 @@ def get_vae(name, model_path, device="cuda"):
     else:
         print("error load vae")
         exit()
-
 
 def vae_encode(name, vae, images, sample_posterior, device):
     if name == "sdxl" or name == "sd3":
@@ -108,7 +122,6 @@ def vae_encode(name, vae, images, sample_posterior, device):
         print("error load vae")
         exit()
     return z
-
 
 def vae_decode(name, vae, latent):
     if name == "sdxl" or name == "sd3":
