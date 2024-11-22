@@ -23,7 +23,7 @@ import torch
 from termcolor import colored
 from torchvision.datasets.utils import download_url
 
-from sana.tools import hf_download_or_fpath
+from .hf_utils import hf_download_or_fpath
 
 pretrained_models = {}
 
