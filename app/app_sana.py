@@ -347,7 +347,14 @@ def generate_multiple(
     global TEST_TIMES
     global INFER_SPEED
 
-    prompts = prompt.split('\n') if use_multiline_prompt else [prompt]
+    if use_multiline_prompt:
+        prompts = [p.strip() for p in prompt.split('\n') if len(p.strip()) >= 3]
+    else:
+        prompts = [prompt.strip()] if len(prompt.strip()) >= 3 else []
+    
+    if not prompts:
+        return [], [], "No valid prompts", "Error: All prompts were invalid (less than 3 characters)", update_inference_count()
+
     total_generations = len(prompts) * num_generations
     
     all_images = []
@@ -383,12 +390,12 @@ def generate_multiple(
             status_info = f"Generated {j * len(prompts) + i + 1}/{total_generations} images. ETA: {eta:.2f}s"
             print(status_info)
             
-            info_box_content = f"<span style='font-size: 16px; font-weight: bold;'>SANA APP V1 : Exclusive to SECourses : https://www.patreon.com/posts/116474081 : Total inference runs: </span><span style='font-size: 16px; color:red; font-weight: bold;'>{TEST_TIMES}</span>"
+            info_box_content = update_inference_count()
             
             yield all_images, all_seeds, speed_info, status_info, info_box_content
 
     # Final yield to ensure all images are displayed
-    yield all_images, all_seeds, speed_info, "Generation complete!", info_box_content
+    yield all_images, all_seeds, speed_info, "Generation complete!", update_inference_count()
 
 TEST_TIMES = read_inference_count()
 model_size = "1.6" if "D20" in args.model_path else "0.6"
