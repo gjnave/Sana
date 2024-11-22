@@ -16,10 +16,8 @@ import spaces
 import torch
 from PIL import Image
 from torchvision.utils import make_grid, save_image
-from transformers import AutoModelForCausalLM, AutoTokenizer
 import tqdm
 
-from app import safety_check
 from app.sana_pipeline import SanaPipeline
 
 def open_folder():
@@ -157,12 +155,6 @@ def get_args():
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--step", default=-1, type=int)
     parser.add_argument("--custom_image_size", default=None, type=int)
-    parser.add_argument(
-        "--shield_model_path",
-        type=str,
-        help="The path to shield model, we employ ShieldGemma-2B by default.",
-        default="MonsterMMORPG/fixed_sana2",
-    )
     parser.add_argument("--share", action="store_true", help="Enable Gradio sharing")
     return parser.parse_known_args()[0]
 
@@ -174,14 +166,6 @@ if torch.cuda.is_available():
     pipe = SanaPipeline(args.config)
     pipe.from_pretrained(model_path)
     pipe.register_progress_bar(gr.Progress())
-
-    # safety checker
-    safety_checker_tokenizer = AutoTokenizer.from_pretrained(args.shield_model_path)
-    safety_checker_model = AutoModelForCausalLM.from_pretrained(
-        args.shield_model_path,
-        device_map="auto",
-        torch_dtype=torch.bfloat16,
-    )
 
 def save_image_sana(img, seed="", save_img=False, ready_image=False):
     save_path = os.path.join(f"output/online_demo_img/{datetime.now().date()}")
@@ -284,8 +268,6 @@ def generate(
     seed = int(randomize_seed_fn(seed, randomize_seed))
     generator = torch.Generator(device=device).manual_seed(seed)
     print(f"PORT: {DEMO_PORT}, model_path: {model_path}, time_times: {TEST_TIMES}")
-    if safety_check.is_dangerous(safety_checker_tokenizer, safety_checker_model, prompt, threshold=0.2):
-        prompt = "A red heart."
 
     print(prompt)
 
