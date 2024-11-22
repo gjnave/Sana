@@ -417,6 +417,7 @@ css = """
 """
 
 with gr.Blocks(css=css) as demo:
+    gr.Markdown(f"# {title}")
     gr.DuplicateButton(
         value="Duplicate Space for private use",
         elem_id="duplicate-button",
