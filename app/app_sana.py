@@ -107,6 +107,8 @@ TEST_TIMES = 0
 INFER_SPEED = 0
 FILENAME = f"output/port{DEMO_PORT}_inference_count.txt"
 
+generation_cancel_status = False
+
 def read_inference_count():
     global TEST_TIMES
     try:
@@ -346,6 +348,9 @@ def generate_multiple(
 ):
     global TEST_TIMES
     global INFER_SPEED
+    global generation_cancel_status
+
+    generation_cancel_status = False
 
     if use_multiline_prompt:
         prompts = [p.strip() for p in prompt.split('\n') if len(p.strip()) >= 3]
@@ -362,6 +367,10 @@ def generate_multiple(
     
     for j in range(num_generations):
         for i, single_prompt in enumerate(prompts):
+            if generation_cancel_status:
+                yield all_images, all_seeds, "Generation cancelled", "Generation cancelled!", update_inference_count()
+                return
+
             images, current_seed, speed_info = generate(
                 single_prompt,
                 negative_prompt,
@@ -396,6 +405,11 @@ def generate_multiple(
 
     # Final yield to ensure all images are displayed
     yield all_images, all_seeds, speed_info, "Generation complete!", update_inference_count()
+
+def cancel_generation():
+    global generation_cancel_status
+    generation_cancel_status = True
+    return "Cancelling generation..."
 
 TEST_TIMES = read_inference_count()
 model_size = "1.6" if "D20" in args.model_path else "0.6"
@@ -443,7 +457,9 @@ with gr.Blocks(css=css) as demo:
                     elem_id="prompt-text"
                 )
                 use_multiline_prompt = gr.Checkbox(label="Use multi-line prompts", value=True)
-                run_button = gr.Button("Run")
+                with gr.Row():
+                    run_button = gr.Button("Run")
+                    cancel_button = gr.Button("Cancel Generation")
             
             with gr.Accordion("Advanced options", open=True):
                 with gr.Group():
@@ -543,6 +559,12 @@ with gr.Blocks(css=css) as demo:
             btn_open_outputs.click(fn=open_folder)
 
     run_button.click(fn=run_inference, inputs=num_imgs, outputs=info_box)
+
+    cancel_button.click(
+        fn=cancel_generation,
+        inputs=[],
+        outputs=[status_box]
+    )
 
     gr.Examples(
         examples=examples,
