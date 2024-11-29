@@ -396,7 +396,7 @@ def cancel_generation():
 TEST_TIMES = read_inference_count()
 model_size = "1.6" if "D20" in args.model_path else "0.6"
 title = f"""
-SANA APP V1 : Exclusive to SECourses : https://www.patreon.com/posts/116474081
+SANA APP V3 : Exclusive to SECourses : https://www.patreon.com/posts/116474081
 """
 
 examples = [
