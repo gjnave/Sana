@@ -69,4 +69,4 @@ def is_dangerous(tokenizer, model, user_prompt, threshold=0.5):
     # Return probability of 'Yes'
     score = probabilities[0].item()
 
-    return score > threshold
+    return score is False
